@@ -3,6 +3,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+// Tauriの利用可能性チェック
+const isTauriAvailable = () => {
+  try {
+    return typeof window !== 'undefined' && 
+           (window as any).__TAURI__ !== undefined;
+  } catch {
+    return false;
+  }
+};
+
 // 2桁ゼロ埋め
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -26,7 +36,7 @@ export default function App() {
   const [now, setNow] = useState<string>(new Date().toLocaleTimeString());
   const [elapsedDisplay, setElapsedDisplay] = useState<string>("00:00");
   const [totalDisplay, setTotalDisplay] = useState<string>(fmtMMSS(minutes * 60));
-  const unsubRef = useRef<() => void>();
+  const unsubRef = useRef<(() => void) | undefined>(undefined);
 
   // minutes が変わったら total 表示を更新
   useEffect(() => {
@@ -42,88 +52,125 @@ export default function App() {
   // Rust 側の状態と同期
   const refresh = useMemo(
     () => async () => {
-      // get_status -> [running, minutes]
-      const [r, m] = await invoke<[boolean, number]>("get_status");
-      setRunning(r);
-      setMinutes(m); // バックエンド側（スヌーズ等）で変更された値もUIへ反映
+      if (!isTauriAvailable()) return;
+      try {
+        const [r, m] = await invoke<[boolean, number]>("get_status");
+        setRunning(r);
+        setMinutes(m);
+      } catch (error) {
+        console.error("Error calling get_status:", error);
+      }
     },
     []
   );
 
   // Tauri イベント購読（tick / done）
   useEffect(() => {
-    // 再購読時に解除するためのハンドラを一括保持
-    unsubRef.current?.();
+    if (!isTauriAvailable()) return;
 
-    const unlistenTick = listen<[number, number]>("standup:tick", (ev) => {
-      const [elapsed, total] = ev.payload;
-      setElapsedDisplay(fmtMMSS(elapsed));
-      setTotalDisplay(fmtMMSS(total));
-    });
+    let unlistenTick: any = null;
+    let unlistenDone: any = null;
 
-    const unlistenDone = listen("standup:done", async () => {
-      // ウィンドウを一瞬最前面にしてフォーカス後、Alert表示
+    const setupListeners = async () => {
       try {
-        const win = getCurrentWindow();
-        await win.setAlwaysOnTop(true);
-        await win.setFocus();
-      } catch {
-        // 失敗しても Alert は出す
+        unlistenTick = await listen<[number, number]>("standup:tick", (event) => {
+          const [elapsed, total] = event.payload;
+          setElapsedDisplay(fmtMMSS(elapsed));
+          setTotalDisplay(fmtMMSS(total));
+        });
+
+        unlistenDone = await listen("standup:done", async () => {
+          try {
+            const win = getCurrentWindow();
+            await win.setAlwaysOnTop(true);
+            await win.setFocus();
+          } catch {}
+          
+          alert("Time to stand up and stretch!");
+          
+          try {
+            const win = getCurrentWindow();
+            await win.setAlwaysOnTop(false);
+          } catch {}
+
+          refresh();
+        });
+      } catch (error) {
+        console.error("Error setting up event listeners:", error);
       }
-      alert("Time to stand up and stretch!");
-      try {
-        const win = getCurrentWindow();
-        await win.setAlwaysOnTop(false);
-      } catch {}
-
-      // Rust 側は停止済みなので最新状態を同期
-      refresh();
-    });
-
-    unsubRef.current = async () => {
-      (await unlistenTick)();
-      (await unlistenDone)();
     };
 
+    setupListeners();
+
     return () => {
-      unsubRef.current?.();
+      try {
+        if (typeof unlistenTick === 'function') unlistenTick();
+        if (typeof unlistenDone === 'function') unlistenDone();
+      } catch (error) {
+        console.error("Error during cleanup:", error);
+      }
     };
   }, [refresh]);
 
   // 変更をバックエンドへ反映 & 保存
   const apply = async () => {
-    const m = Math.max(1, Math.floor(minutes));
-    localStorage.setItem(LS_KEY_DEFAULT_MINUTES, String(m));
-    await invoke("set_interval_minutes", { minutes: m });
-    await refresh();
+    if (!isTauriAvailable()) return;
+    try {
+      const m = Math.max(1, Math.floor(minutes));
+      localStorage.setItem(LS_KEY_DEFAULT_MINUTES, String(m));
+      await invoke("set_interval_minutes", { minutes: m });
+      await refresh();
+    } catch (error) {
+      console.error("Error in apply:", error);
+    }
   };
 
   // Start：現在の minutes を適用してから開始
   const start = async () => {
-    await apply();
-    await invoke("start");
-    await refresh();
+    if (!isTauriAvailable()) return;
+    try {
+      await apply();
+      await invoke("start");
+      await refresh();
+    } catch (error) {
+      console.error("Error starting timer:", error);
+    }
   };
 
   // Stop：停止 & 次回のために保存分をバックエンドへ戻す
   const stop = async () => {
-    await invoke("stop");
-    const saved = Number(localStorage.getItem(LS_KEY_DEFAULT_MINUTES)) || 40;
-    await invoke("set_interval_minutes", { minutes: saved });
-    await refresh();
+    if (!isTauriAvailable()) return;
+    try {
+      await invoke("stop");
+      const saved = Number(localStorage.getItem(LS_KEY_DEFAULT_MINUTES)) || 40;
+      await invoke("set_interval_minutes", { minutes: saved });
+      await refresh();
+    } catch (error) {
+      console.error("Error stopping timer:", error);
+    }
   };
 
   // Snooze：5分固定（Rust 側で即開始）
   const snooze = async () => {
-    await invoke("snooze");
-    await refresh();
+    if (!isTauriAvailable()) return;
+    try {
+      await invoke("snooze");
+      await refresh();
+    } catch (error) {
+      console.error("Error snoozing timer:", error);
+    }
   };
 
   // 初回：保存 minutes を Rust 側へ同期
   useEffect(() => {
+    if (!isTauriAvailable()) return;
     (async () => {
-      await invoke("set_interval_minutes", { minutes });
-      await refresh();
+      try {
+        await invoke("set_interval_minutes", { minutes });
+        await refresh();
+      } catch (error) {
+        console.error("Error initializing:", error);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -131,6 +178,7 @@ export default function App() {
   return (
     <div style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
       <h1>StandUp Reminder</h1>
+
 
       {/* 設定行 */}
       <div style={{ marginBottom: 12 }}>
@@ -145,27 +193,43 @@ export default function App() {
           onChange={(e) => setMinutes(Number(e.target.value))}
           style={{ width: 80, marginRight: 8 }}
         />
-        <button onClick={apply} style={{ padding: "8px 12px", marginRight: 8 }}>
+        <button 
+          onClick={apply} 
+          style={{ padding: "8px 12px", marginRight: 8 }}
+          disabled={!isTauriAvailable()}
+        >
           Apply
         </button>
-        <button onClick={snooze} style={{ padding: "8px 12px" }}>
+        <button 
+          onClick={snooze} 
+          style={{ padding: "8px 12px" }}
+          disabled={!isTauriAvailable()}
+        >
           Snooze 5 min
         </button>
       </div>
 
       {/* 操作行 */}
       <div style={{ marginBottom: 12 }}>
-        <button onClick={start} style={{ padding: "8px 12px", marginRight: 8 }}>
+        <button 
+          onClick={start} 
+          style={{ padding: "8px 12px", marginRight: 8 }}
+          disabled={!isTauriAvailable()}
+        >
           Start
         </button>
-        <button onClick={stop} style={{ padding: "8px 12px" }}>
+        <button 
+          onClick={stop} 
+          style={{ padding: "8px 12px", marginRight: 8 }}
+          disabled={!isTauriAvailable()}
+        >
           Stop
         </button>
       </div>
 
       {/* ステータス */}
       <div style={{ color: "#555", fontSize: 18, marginTop: 8 }}>
-        <div>Now: <span style={{ fontVariantNumeric: "tabular-nums" }}>{now}</span></div>
+        <div>Now(JST): <span style={{ fontVariantNumeric: "tabular-nums" }}>{now}</span></div>
         <div style={{ marginTop: 6 }}>
           Status: Running = <b>{String(running)}</b> | Interval = <b>{minutes}</b> min
         </div>

@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -9,11 +10,19 @@ struct AppState {
     running: Arc<AtomicBool>,
     // 現在サイクルの合計秒（スヌーズ中は 300）
     interval_secs: Arc<AtomicU64>,
+    // タイマー開始時刻（UNIXタイムスタンプ秒）
+    start_time: Arc<AtomicU64>,
 }
 
 #[tauri::command]
 async fn start(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
+    // 現在時刻を開始時刻として記録
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    state.start_time.store(now, Ordering::SeqCst);
     state.running.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -39,6 +48,12 @@ async fn snooze(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     state.running.store(false, Ordering::SeqCst);
     state.interval_secs.store(5 * 60, Ordering::SeqCst);
+    // 現在時刻を開始時刻として記録
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    state.start_time.store(now, Ordering::SeqCst);
     state.running.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -53,6 +68,7 @@ async fn get_status(app: AppHandle) -> Result<(bool, u64), String> {
     ))
 }
 
+
 #[tokio::main]
 async fn main() {
     tauri::Builder::default()
@@ -61,6 +77,7 @@ async fn main() {
             let state = AppState {
                 running: Arc::new(AtomicBool::new(false)),
                 interval_secs: Arc::new(AtomicU64::new(40 * 60)),
+                start_time: Arc::new(AtomicU64::new(0)),
             };
             app.manage(state.clone());
 
@@ -68,23 +85,30 @@ async fn main() {
             let app_handle = app.handle().clone();
             tokio::spawn(async move {
                 loop {
-                    if state.running.load(Ordering::SeqCst) {
+                    let is_running = state.running.load(Ordering::SeqCst);
+                    if is_running {
                         let interval = state.interval_secs.load(Ordering::SeqCst);
-                        for sec in 0..=interval {
-                            if !state.running.load(Ordering::SeqCst) {
-                                break;
-                            }
-                            // 経過/合計（秒）をフロントへ
-                            let _ = app_handle.emit("standup:tick", (sec, interval));
-                            if sec == interval {
-                                state.running.store(false, Ordering::SeqCst);
-                                let _ = app_handle.emit("standup:done", ());
-                            }
-                            sleep(Duration::from_secs(1)).await;
+                        let start_time = state.start_time.load(Ordering::SeqCst);
+                        
+                        // 現在時刻を取得して経過秒数を計算
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        let elapsed = now.saturating_sub(start_time);
+                        
+                        // 経過/合計（秒）をフロントへ
+                        let _ = app_handle.emit("standup:tick", (elapsed, interval));
+                        
+                        // 時間切れチェック
+                        if elapsed >= interval {
+                            state.running.store(false, Ordering::SeqCst);
+                            let _ = app_handle.emit("standup:done", ());
                         }
-                    } else {
-                        sleep(Duration::from_secs(1)).await;
                     }
+                    
+                    // 実行中でもそうでなくても1秒間隔でチェック
+                    sleep(Duration::from_secs(1)).await;
                 }
             });
 

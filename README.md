@@ -25,3 +25,16 @@ $ cargo tauri dev
 # 本番ビルド
 $ cargo tauri build
 ```
+
+## ⚠️ 重要な注意事項
+
+**必ず `cargo tauri dev` でTauriアプリとして起動してください。**
+
+❌ **間違った起動方法**: 
+- `pnpm -C app dev` (これはブラウザ用)
+- ブラウザで `http://localhost:5173/` にアクセス
+
+✅ **正しい起動方法**:
+- `cargo tauri dev` (これがTauriアプリを起動)
+
+ブラウザで直接アクセスした場合、Tauri APIが利用できないため、タイマー機能は動作しません。
