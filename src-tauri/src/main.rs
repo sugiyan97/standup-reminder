@@ -16,7 +16,6 @@ struct AppState {
 
 #[tauri::command]
 async fn start(app: AppHandle) -> Result<(), String> {
-    println!("Start command called");
     let state = app.state::<AppState>();
     // 現在時刻を開始時刻として記録
     let now = SystemTime::now()
@@ -25,7 +24,6 @@ async fn start(app: AppHandle) -> Result<(), String> {
         .as_secs();
     state.start_time.store(now, Ordering::SeqCst);
     state.running.store(true, Ordering::SeqCst);
-    println!("Timer started - running: true, start_time: {}", now);
     Ok(())
 }
 
@@ -70,21 +68,6 @@ async fn get_status(app: AppHandle) -> Result<(bool, u64), String> {
     ))
 }
 
-/// テスト用イベント送信
-#[tauri::command]
-async fn test_emit_event(app: AppHandle) -> Result<(), String> {
-    println!("🧪 Test emit event command called");
-    match app.emit("standup:tick", (99u64, 120u64)) {
-        Ok(_) => {
-            println!("✅ Successfully emitted test tick event: elapsed=99, total=120");
-            Ok(())
-        }
-        Err(e) => {
-            println!("❌ Error emitting test event: {:?}", e);
-            Err(format!("Failed to emit test event: {:?}", e))
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() {
@@ -100,9 +83,7 @@ async fn main() {
 
             // バックグラウンドで毎秒 tick を送る
             let app_handle = app.handle().clone();
-            println!("Setting up background timer task...");
             tokio::spawn(async move {
-                println!("✅ Background timer task started successfully");
                 loop {
                     let is_running = state.running.load(Ordering::SeqCst);
                     if is_running {
@@ -116,21 +97,13 @@ async fn main() {
                             .as_secs();
                         let elapsed = now.saturating_sub(start_time);
                         
-                        println!("Timer tick - elapsed: {}, total: {}, running: {}", elapsed, interval, is_running);
-                        
                         // 経過/合計（秒）をフロントへ
-                        match app_handle.emit("standup:tick", (elapsed, interval)) {
-                            Ok(_) => println!("✅ Successfully emitted tick event: elapsed={}, total={}", elapsed, interval),
-                            Err(e) => println!("❌ Error emitting tick event: {:?}", e),
-                        }
+                        let _ = app_handle.emit("standup:tick", (elapsed, interval));
                         
                         // 時間切れチェック
                         if elapsed >= interval {
                             state.running.store(false, Ordering::SeqCst);
-                            println!("Timer completed, emitting done event");
-                            if let Err(e) = app_handle.emit("standup:done", ()) {
-                                println!("Error emitting done event: {:?}", e);
-                            }
+                            let _ = app_handle.emit("standup:done", ());
                         }
                     }
                     
@@ -146,8 +119,7 @@ async fn main() {
             stop,
             set_interval_minutes,
             snooze,
-            get_status,
-            test_emit_event
+            get_status
         ])
         .run(tauri::generate_context!()) // v2 では Context が必須
         .expect("error while running tauri app");
