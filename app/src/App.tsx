@@ -165,7 +165,7 @@ export default function App() {
 
       {/* ステータス */}
       <div style={{ color: "#555", fontSize: 18, marginTop: 8 }}>
-        <div>Now: <span style={{ fontVariantNumeric: "tabular-nums" }}>{now}</span></div>
+        <div>Now(JST): <span style={{ fontVariantNumeric: "tabular-nums" }}>{now}</span></div>
         <div style={{ marginTop: 6 }}>
           Status: Running = <b>{String(running)}</b> | Interval = <b>{minutes}</b> min
         </div>
