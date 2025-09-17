@@ -1,0 +1,13 @@
+[package]
+name = "standup-reminder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Tauri v2
+tauri = { version = "2", features = [] }
+# 非同期タイマー等
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
