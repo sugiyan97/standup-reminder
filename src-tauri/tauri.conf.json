@@ -10,8 +10,13 @@
     "devUrl": "http://localhost:5173"
   },
   "app": {
-    "security": { "csp": null },
-    "windows": [{ "title": "StandUp Reminder", "width": 480, "height": 360, "resizable": true }]
+    "security": { 
+      "csp": null,
+      "capabilities": ["main-capability"],
+      "dangerousDisableAssetCspModification": true
+    },
+    "windows": [{ "title": "StandUp Reminder", "width": 480, "height": 360, "resizable": true }],
+    "withGlobalTauri": true
   },
   "bundle": {
     "icon": [
