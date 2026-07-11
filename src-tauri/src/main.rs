@@ -130,8 +130,12 @@ async fn main() {
                 ],
             )?;
 
+            // メニューバー用の小さいアイコンを明示的に読み込む
+            // （default_window_icon は Dock/ウィンドウ用の大きいアイコンで、トレイでは表示されないことがある）
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
                 .menu(&tray_menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
