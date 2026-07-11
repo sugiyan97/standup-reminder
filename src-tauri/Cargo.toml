@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Tauri v2
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 # OS ネイティブ通知
 tauri-plugin-notification = "2"
 # 非同期タイマー等
